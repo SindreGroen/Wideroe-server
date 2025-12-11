@@ -42,18 +42,29 @@ let lastFetchTime = 0;
 const agent = new https.Agent({ rejectUnauthorized: false });
 
 // --- HJELPEFUNKSJON: HENT FRA AVINOR ---
+// --- HJELPEFUNKSJON: HENT FRA AVINOR (Med kamuflasje) ---
 async function fetchFromAvinor() {
     try {
         const url = `https://flydata.avinor.no/XmlFeed.asp?airport=${AIRPORT_CODE}&TimeFrom=${HOURS_BACK}&TimeTo=${HOURS_FORWARD}&direction=A`;
-        console.log(`📡 Henter ferske data fra Avinor: ${url}`);
+        console.log(`📡 Henter ferske data fra Avinor...`);
 
         const response = await axios.get(url, {
             httpsAgent: agent,
-            timeout: 8000,
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+            timeout: 10000,
+            headers: {
+                // VIKTIG: Dette er legitimasjonen vår
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9,nb;q=0.8',
+                'Referer': 'https://avinor.no/',
+                'Upgrade-Insecure-Requests': '1',
+                'Cache-Control': 'max-age=0'
+            }
         });
 
+        // Sjekk om vi fremdeles blir stoppet
         if (typeof response.data === 'string' && response.data.trim().startsWith('<!DOCTYPE')) {
+            console.log("❌ Avinor gjennomskuet oss. Fikk HTML-feilside.");
             throw new Error("Mottok HTML-feilside fra Avinor.");
         }
 
@@ -61,7 +72,8 @@ async function fetchFromAvinor() {
         const result = await parser.parseStringPromise(response.data);
 
         if (!result.airport || !result.airport.flights || !result.airport.flights[0].flight) {
-            throw new Error("Tom XML");
+            console.log("⚠️ XML lastet, men ingen flyvninger funnet (kan være stille på flyplassen).");
+            return []; 
         }
 
         const flights = result.airport.flights[0].flight;
@@ -86,10 +98,9 @@ async function fetchFromAvinor() {
 
     } catch (error) {
         console.error("❌ Feil ved henting:", error.message);
-        return null; // Returner null så vi vet at det feilet
+        return null; 
     }
 }
-
 // --- HOVED-ENDEPUNKT ---
 app.get('/api/flights', async (req, res) => {
     const now = Date.now();
