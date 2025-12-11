@@ -25,7 +25,7 @@
             box-shadow: 0 0 50px rgba(0,0,0,0.5);
         }
 
-        /* SIKKERHETS-GARDIN (Skjuler "S"-flashet ved start) */
+        /* SIKKERHETS-GARDIN Ballefransen (Skjuler "S"-flashet ved start) */
         #curtain {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background-color: #1f8226; z-index: 9999;
@@ -81,11 +81,7 @@
         // --- DATA HENTING ---
         async function fetchFlightsFromAPI() {
             // LINK TIL DIN NYE SERVER PÅ RENDER:
-<<<<<<< HEAD:Index.html
-            const url = 'https://wideroe-server.onrender.com/api/flights';
-=======
            const url = 'https://wideroe-server.onrender.com/api/flights';
->>>>>>> bfbb5b720915dbc49d898a8fe7e4114cd8fa288d:index.html
 
             try {
                 const response = await fetch(url);

@@ -11,7 +11,7 @@ app.use(cors());
 
 // --- KONFIGURASJON ---
 const AIRPORT_CODE = 'BGO'; 
-const HOURS_BACK = 12;      // Vi bruker enkle tall (timer), det er tryggest
+const HOURS_BACK = 12;      // Use simple integers for hours - safest for legacy API
 const HOURS_FORWARD = 2;    
 const CACHE_DURATION = 180 * 1000; 
 
@@ -39,10 +39,10 @@ const agent = new https.Agent({ rejectUnauthorized: false });
 
 async function fetchFromAvinor() {
     try {
-        // VIKTIG: Store bokstaver på Airport, TimeFrom, TimeTo, Direction
+        // IMPORTANT: Capitalized Airport, TimeFrom, TimeTo, Direction
         const url = `https://flydata.avinor.no/XmlFeed.asp?Airport=${AIRPORT_CODE}&TimeFrom=${HOURS_BACK}&TimeTo=${HOURS_FORWARD}&Direction=A`;
         
-        console.log(`📡 FORSØK PÅ NY URL: ${url}`); // Denne vil bevise at koden er oppdatert
+        console.log(`📡 FORSØK PÅ NY URL: ${url}`); // This log proves the update worked
 
         const response = await axios.get(url, {
             httpsAgent: agent,
