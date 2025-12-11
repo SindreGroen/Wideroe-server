@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Widerøe Flipboard - INSTANT</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js"></script>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=B612+Mono:wght@700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'B612 Mono', monospace; 
+        }
+        
+        #lottie-container {
+            width: 100%;
+            max-width: 1920px; 
+            max-height: 1080px;
+            background-color: #1f8226; 
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+            
+            /* SKJULER INNHOLDET HELT I STARTEN (Ingen fade, bare usynlig) */
+            visibility: hidden; 
+        }
+
+        .font-loaded svg text {
+            font-family: 'B612 Mono', monospace !important;
+            font-weight: 700 !important;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="lottie-container"></div>
+
+    <script>
+        const animationPath = 'data1234.json'; 
+        
+        const totalCitySlots = 12;   
+        const totalFlightSlots = 6; 
+
+        // --- TESTDATA ---
+        const demoFlights = [
+            { id: "WF585", from: "BERGEN" },          
+            { id: "WF1234", from: "SANDNESSJØEN" },   
+            { id: "WF007", from: "KIRKENES" },
+            { id: "WF450", from: "TRONDHEIM" },
+            { id: "WF9105", from: "TROMSØ" },         
+            { id: "WF777", from: "KØBENHAVN" },
+            { id: "WF888", from: "GØTEBORG" },
+            { id: "WF333", from: "SOGNDAL" },
+            { id: "WF6666", from: "HAMMERFEST" },     
+            { id: "WF290", from: "ABERDEEN" },
+            { id: "WF555", from: "FØRDE" },
+            { id: "WF583", from: "KRISTIANSAND" }, 
+            { id: "WF101", from: "OSLO" },
+            { id: "WF4444", from: "ØRSTA/VOLDA" }     
+        ];
+
+        let currentDisplay = demoFlights[Math.floor(Math.random() * demoFlights.length)];
+        let anim = null;
+        let isFirstRun = true; 
+
+        document.fonts.ready.then(function () {
+            anim = lottie.loadAnimation({
+                container: document.getElementById('lottie-container'), 
+                renderer: 'svg',
+                loop: false,
+                autoplay: false, 
+                path: animationPath
+            });
+
+            anim.addEventListener('DOMLoaded', function() {
+                document.getElementById('lottie-container').classList.add('font-loaded');
+                runDemoLoop();
+            });
+        });
+
+        function prepareCityText(text, totalSlots) {
+            let arr = Array(totalSlots).fill(" "); 
+            const safeText = text ? text.toUpperCase() : "";
+            let startPos = 0;
+            if (safeText.length < totalSlots) {
+                const empty = totalSlots - safeText.length;
+                startPos = Math.floor(empty / 2);
+            }
+            for (let i = 0; i < safeText.length; i++) {
+                if (startPos + i < totalSlots) {
+                    arr[startPos + i] = safeText[i];
+                }
+            }
+            return arr;
+        }
+
+        function prepareFlightText(text, totalSlots) {
+            let arr = Array(totalSlots).fill(" "); 
+            const safeText = text ? text.toUpperCase() : "";
+            for (let i = 0; i < safeText.length; i++) {
+                if (i < totalSlots) {
+                    arr[i] = safeText[i];
+                }
+            }
+            return arr;
+        }
+
+        function norm(str) {
+            return str.toLowerCase().replace(/\s+/g, '');
+        }
+
+        function updateDualLayer(baseName, index, charMsg1, charMsg2) {
+            if (!anim) return;
+            const elements = anim.renderer.elements;
+            const targetName = norm(baseName + index);
+
+            for (let i = 0; i < elements.length; i++) {
+                const elName = elements[i].data && elements[i].data.nm ? norm(elements[i].data.nm) : "";
+                
+                if (elName === targetName) {
+                    const innerElements = elements[i].elements;
+                    if (innerElements) {
+                        for (let j = 0; j < innerElements.length; j++) {
+                            const layer = innerElements[j];
+                            if (!layer.data || !layer.data.t) continue; 
+
+                            const rawName = layer.data.nm || "";
+                            if (rawName.indexOf(".2") !== -1) {
+                                layer.updateDocumentData({ t: charMsg2 });
+                            } else {
+                                layer.updateDocumentData({ t: charMsg1 });
+                            }
+                        }
+                    }
+                    return; 
+                }
+            }
+        }
+
+        function runDemoLoop() {
+            let nextFlight;
+            do {
+                const randomIndex = Math.floor(Math.random() * demoFlights.length);
+                nextFlight = demoFlights[randomIndex];
+            } while (nextFlight.id === currentDisplay.id);
+
+            console.log(`Demo: ${currentDisplay.id} -> ${nextFlight.id}`);
+
+            const city1 = prepareCityText(currentDisplay.from, totalCitySlots);
+            const city2 = prepareCityText(nextFlight.from, totalCitySlots);
+            const id1   = prepareFlightText(currentDisplay.id, totalFlightSlots);
+            const id2   = prepareFlightText(nextFlight.id, totalFlightSlots);
+
+            // 1. OPPDATER TEKSTEN (Mens containeren fortsatt er usynlig første gang)
+            for (let i = 1; i <= totalCitySlots; i++) {
+                updateDualLayer("Bynavn Char", i, city1[i-1], city2[i-1]);
+            }
+            for (let i = 1; i <= totalFlightSlots; i++) {
+                updateDualLayer("Fnummer Char", i, id1[i-1], id2[i-1]);
+            }
+
+            // 2. SKRU PÅ LYSET (Umiddelbart etter at teksten er satt)
+            if (isFirstRun) {
+                document.getElementById('lottie-container').style.visibility = "visible";
+                isFirstRun = false;
+            }
+
+            if (anim) {
+                anim.goToAndPlay(0); 
+                anim.playSegments([0, 251], true);
+            }
+
+            currentDisplay = nextFlight;
+
+            setTimeout(runDemoLoop, 10000); 
+        }
+    </script>
+</body>
+</html>
