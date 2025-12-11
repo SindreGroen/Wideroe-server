@@ -11,9 +11,9 @@ app.use(cors());
 
 // --- KONFIGURASJON ---
 const AIRPORT_CODE = 'BGO'; 
-const HOURS_BACK = 12;      // Bruker tall (timer) - tryggest for legacy API
+const HOURS_BACK = 12;      // Vi bruker enkle tall (timer), det er tryggest
 const HOURS_FORWARD = 2;    
-const CACHE_DURATION = 180 * 1000; // 3 minutter cache
+const CACHE_DURATION = 180 * 1000; 
 
 const airportNames = {
     "OSL": "OSLO", "SVG": "STAVANGER", "TRD": "TRONDHEIM", "TOS": "TROMSØ",
@@ -26,7 +26,6 @@ const airportNames = {
     "GDN": "GDANSK", "WAW": "WARSZAWA", "ARN": "STOCKHOLM", "KEF": "REYKJAVIK"
 };
 
-// Backup-data (vises KUN ved total krise)
 const BACKUP_FLIGHTS = [
     { id: "WF585", from: "KRISTIANSAND", time: new Date().toISOString() },
     { id: "SK243", from: "OSLO", time: new Date().toISOString() },
@@ -40,32 +39,30 @@ const agent = new https.Agent({ rejectUnauthorized: false });
 
 async function fetchFromAvinor() {
     try {
-        // ENDRING: Bruker store bokstaver (Airport, Direction) og tall for tid.
-        // Dette er formatet gamle ASP-servere liker best.
+        // VIKTIG: Store bokstaver på Airport, TimeFrom, TimeTo, Direction
         const url = `https://flydata.avinor.no/XmlFeed.asp?Airport=${AIRPORT_CODE}&TimeFrom=${HOURS_BACK}&TimeTo=${HOURS_FORWARD}&Direction=A`;
         
-        console.log(`📡 Henter data fra: ${url}`);
+        console.log(`📡 FORSØK PÅ NY URL: ${url}`); // Denne vil bevise at koden er oppdatert
 
         const response = await axios.get(url, {
             httpsAgent: agent,
             timeout: 10000,
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Referer': 'https://avinor.no/'
             }
         });
 
-        // Sjekk om vi fikk HTML-feil
         if (typeof response.data === 'string' && response.data.trim().startsWith('<!DOCTYPE')) {
-            throw new Error("Mottok HTML-feilside (Sannsynligvis feil parametere).");
+            throw new Error("Mottok HTML-feilside (Sannsynligvis feil parametere eller IP-blokk).");
         }
 
         const parser = new xml2js.Parser();
         const result = await parser.parseStringPromise(response.data);
 
         if (!result.airport || !result.airport.flights || !result.airport.flights[0].flight) {
-            console.log("⚠️ Ingen flyvninger i XML (eller tomt svar).");
+            console.log("⚠️ Ingen flyvninger i XML.");
             return []; 
         }
 
@@ -98,7 +95,6 @@ async function fetchFromAvinor() {
 app.get('/api/flights', async (req, res) => {
     const now = Date.now();
 
-    // Cache-sjekk
     if (cachedData && (now - lastFetchTime < CACHE_DURATION)) {
         console.log("♻️  Serverer cache.");
         return res.json(cachedData);
@@ -116,7 +112,6 @@ app.get('/api/flights', async (req, res) => {
             res.json(cachedData);
         } else {
             console.log("🚨 Serverer backup.");
-            // Oppdaterer tiden på backup-flyene så de vises som "nå"
             const liveBackup = BACKUP_FLIGHTS.map(f => ({ ...f, time: new Date().toISOString() }));
             res.json(liveBackup);
         }
@@ -125,4 +120,6 @@ app.get('/api/flights', async (req, res) => {
 
 app.get('/', (req, res) => { res.send('Widerøe Middleware OK'); });
 
-app.listen(PORT, () => { console.log(`🚀 Server kjører på port ${PORT}`); });
+app.listen(PORT, () => { 
+    console.log(`🚀 Server starter - VERSJON 2.0 på port ${PORT}`); 
+});
