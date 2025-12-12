@@ -25,7 +25,7 @@
             box-shadow: 0 0 50px rgba(0,0,0,0.5);
         }
 
-        /* SIKKERHETS-GARDIN Ballefransen (Skjuler "S"-flashet ved start) */
+        /* SIKKERHETS-GARDIN (Skjuler "S"-flashet ved start) */
         #curtain {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background-color: #1f8226; z-index: 9999;
@@ -34,7 +34,6 @@
         }
         .fade-out { opacity: 0; }
 
-        /* Tvinger Montserrat på Lottie-teksten */
         .font-loaded svg text {
             font-family: 'Montserrat', sans-serif !important;
             font-weight: 700 !important;
@@ -52,13 +51,13 @@
         const totalCitySlots = 12;   
         const totalFlightSlots = 6; 
 
-        // --- BACKUP DATA (Hvis serveren/nettet feiler) ---
+        // --- BACKUP DATA (Vises KUN hvis alt annet feiler) ---
         const FALLBACK_DATA = { id: "WF585", from: "KRISTIANSAND" };
 
         let anim = null;
         let isFirstRun = true;
 
-        // Sikkerhetsnett: Fjern gardinen etter 3 sekunder uansett, så skjermen ikke forblir grønn
+        // Sikkerhetsnett: Fjern gardinen etter 3 sekunder uansett
         setTimeout(() => {
             document.getElementById('curtain').classList.add('fade-out');
         }, 3000);
@@ -74,14 +73,14 @@
 
             anim.addEventListener('DOMLoaded', function() {
                 document.getElementById('lottie-container').classList.add('font-loaded');
-                runLogicLoop(); // Start logikken
+                runLogicLoop(); 
             });
         });
 
         // --- DATA HENTING ---
         async function fetchFlightsFromAPI() {
-            // LINK TIL DIN NYE SERVER PÅ RENDER:
-           const url = 'https://wideroe-server.onrender.com/api/flights';
+            // DIN LIVE SERVER:
+            const url = 'https://wideroe-server.onrender.com/api/flights';
 
             try {
                 const response = await fetch(url);
@@ -90,7 +89,7 @@
                 return data;
             } catch (error) {
                 console.error("Kunne ikke hente live data:", error);
-                return []; // Returner tom liste ved feil
+                return []; 
             }
         }
 
@@ -99,7 +98,6 @@
             let arr = Array(totalSlots).fill(" "); 
             const safeText = text ? text.toUpperCase() : "";
             let startPos = 0;
-            // Sentrerer teksten
             if (safeText.length < totalSlots) {
                 const empty = totalSlots - safeText.length;
                 startPos = Math.floor(empty / 2);
@@ -115,7 +113,6 @@
         function prepareFlightText(text, totalSlots) {
             let arr = Array(totalSlots).fill(" "); 
             const safeText = text ? text.toUpperCase() : "";
-            // Venstrejustert
             for (let i = 0; i < safeText.length; i++) {
                 if (i < totalSlots) {
                     arr[i] = safeText[i];
@@ -157,28 +154,34 @@
 
         // --- HOVEDLOGIKK ---
         async function runLogicLoop() {
-            console.log("Sjekker flydata...");
+            console.log("--- START LOGIKK ---");
             const flights = await fetchFlightsFromAPI();
             const now = new Date();
+            console.log("Klokken er nå:", now.toLocaleTimeString());
             
-            // Sorter flyene (Nyeste tidspunkt først)
-            // Merk: Avhengig av API kan datoformatet variere, men serveren din sender ISO
-            flights.sort((a, b) => new Date(b.time) - new Date(a.time));
+            // 1. FILTRERING: Vi vil kun ha Widerøe (WF)
+            const wfFlights = flights.filter(f => f.id.startsWith("WF"));
+            console.log(`Fant ${wfFlights.length} Widerøe-fly (av totalt ${flights.length}).`);
 
-            // Finn fly som HAR landet (Tidspunkt < Nå)
-            const landedFlights = flights.filter(f => new Date(f.time) < now);
+            // 2. SORTERING: Nyeste tidspunkt først
+            wfFlights.sort((a, b) => new Date(b.time) - new Date(a.time));
+
+            // 3. FINN LANDEDE FLY: Tidspunkt < Nå
+            const landedFlights = wfFlights.filter(f => new Date(f.time) < now);
 
             let msg1, msg2;
 
             if (landedFlights.length > 0) {
-                // Ta det aller siste som landet (første i den sorterte listen)
+                // Ta det aller siste WF-flyet som landet (første i den sorterte listen)
                 const latest = landedFlights[0];
-                console.log(`Viser: ${latest.id} fra ${latest.from}`);
+                const landTime = new Date(latest.time).toLocaleTimeString();
                 
-                msg1 = { id: "SISTE", from: "ANKOMST" }; // Tekst før flipp
-                msg2 = latest;                            // Tekst etter flipp
+                console.log(`✅ VALGT FLY: ${latest.id} fra ${latest.from} (Landet: ${landTime})`);
+                
+                msg1 = { id: "SISTE", from: "ANKOMST" }; 
+                msg2 = latest;                            
             } else {
-                console.log("Ingen landinger funnet, viser fallback.");
+                console.log("⚠️ Ingen WF-landinger funnet akkurat nå. Viser fallback.");
                 msg1 = { id: "INFO", from: "WIDERØE" };
                 msg2 = FALLBACK_DATA;
             }
