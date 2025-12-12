@@ -2,29 +2,28 @@
 <html lang="no">
 <head>
     <meta charset="UTF-8">
-    <title>Widerøe - CANVAS STABLE</title>
+    <title>Widerøe - LIVE Flesland</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&display=swap" rel="stylesheet">
+
     <style>
         body {
             margin: 0; padding: 0; 
             background-color: #1f8226; 
             display: flex; justify-content: center; align-items: center;
             height: 100vh; overflow: hidden;
+            font-family: 'Montserrat', sans-serif;
         }
         #lottie-container {
             width: 1920px; height: 1080px;
             background-color: #1f8226; 
         }
-        #status {
-            position: absolute; top: 10px; left: 10px;
-            background: rgba(0,0,0,0.8); color: lime;
-            padding: 10px; font-family: monospace; z-index: 9999;
-            pointer-events: none;
-        }
+        /* Statusboks - kan fjernes i final leveranse */
+        #status { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.5); color: #fff; padding: 5px; font-family: monospace; pointer-events: none; z-index: 999; }
     </style>
 </head>
 <body>
-    <div id="status">Laster...</div>
+    <div id="status">Starter...</div>
     <div id="lottie-container"></div>
 
     <script>
@@ -34,111 +33,132 @@
         const FALLBACK_DATA = { id: "WF585", from: "KRISTIANSAND" };
 
         let anim = null;
-        // Cache for å huske hvor tekstlagene er
-        let layerCache = { city: [], flight: [] };
+        let textElements = [];
 
         function log(msg) {
             console.log(msg);
-            document.getElementById('status').innerText = msg;
+            const el = document.getElementById('status');
+            if(el) el.innerText = msg;
         }
 
-        // --- 1. START ANIMASJONEN I CANVAS-MODUS ---
-        anim = lottie.loadAnimation({
-            container: document.getElementById('lottie-container'), 
-            renderer: 'canvas', // <--- REDNINGEN MOT KRASJ
-            loop: false,
-            autoplay: false, 
-            path: animationPath,
-            rendererSettings: {
-                clearCanvas: true,
-                // VIKTIG: Vi tvinger fonten til å være Arial midlertidig
-                fontFamily: 'Arial', 
-            }
+        document.fonts.ready.then(function () {
+            anim = lottie.loadAnimation({
+                container: document.getElementById('lottie-container'), 
+                renderer: 'svg',  
+                loop: false,      
+                autoplay: false,  
+                path: animationPath
+            });
+
+            anim.addEventListener('DOMLoaded', function() {
+                document.getElementById('lottie-container').classList.add('font-loaded');
+                findTextLayers(); 
+                playCycle(); 
+            });
+
+            anim.addEventListener('complete', function() {
+                setTimeout(playCycle, 1000);
+            });
         });
 
-        // --- 2. NÅR DEN ER LASTET: BYGG KART OVER TEKSTEN ---
-        anim.addEventListener('DOMLoaded', function() {
-            log("Canvas lastet. Indekserer tekstlag...");
-            buildLayerCache();
-            log("Klar. Starter loop.");
-            runLogicLoop();
-        });
-
-        // Hjelpefunksjon for å finne lagene i Canvas-strukturen
-        function buildLayerCache() {
-            // I Canvas-modus ligger elementene i anim.renderer.elements
-            const traverse = (elements, parentName) => {
+        function findTextLayers() {
+            const traverse = (elements) => {
                 for (let i = 0; i < elements.length; i++) {
                     const el = elements[i];
-                    // Sjekk navn i data-objektet
-                    const rawName = (el.data && el.data.nm) ? el.data.nm.toLowerCase() : "";
-                    
-                    // Er det et tekstlag?
-                    if (el.data && el.data.t) {
-                        if (parentName.includes("bynavn char")) {
-                            const match = parentName.match(/bynavn char\s*(\d+)/);
-                            if (match) {
-                                const idx = parseInt(match[1]);
-                                if (!layerCache.city[idx]) layerCache.city[idx] = [];
-                                layerCache.city[idx].push(el);
-                            }
-                        }
-                        else if (parentName.includes("fnummer char")) {
-                            const match = parentName.match(/fnummer char\s*(\d+)/);
-                            if (match) {
-                                const idx = parseInt(match[1]);
-                                if (!layerCache.flight[idx]) layerCache.flight[idx] = [];
-                                layerCache.flight[idx].push(el);
-                            }
+                    if (el.data && el.data.t && el.data.nm) {
+                        const name = el.data.nm.toLowerCase();
+                        if (name.includes("bynavn char") || name.includes("fnummer char")) {
+                            textElements.push({ element: el, name: name });
                         }
                     }
-                    // Gå dypere hvis det er en gruppe
-                    if (el.elements) {
-                        let nextParent = parentName;
-                        if (rawName.includes("bynavn") || rawName.includes("fnummer")) {
-                            nextParent = rawName;
-                        }
-                        traverse(el.elements, nextParent);
-                    }
+                    if (el.elements) traverse(el.elements);
                 }
             };
-            traverse(anim.renderer.elements, "");
-            console.log("Cache ferdig:", layerCache);
+            traverse(anim.renderer.elements);
         }
 
-        // Funksjon som oppdaterer teksten i Canvas
-        function updateSlot(type, index, text1, text2) {
-            const layers = layerCache[type][index];
-            if (!layers) return;
+        async function playCycle() {
+            log("Henter data...");
+            const flights = await fetchFlightsFromAPI();
+            const now = new Date();
+            
+            // Filter: Widerøe (WF)
+            const wfFlights = flights.filter(f => f.id.startsWith("WF"));
+            
+            // Sorter: Nyeste tidspunkt først (Index 0 er nyest, Index 1 er nest nyest)
+            wfFlights.sort((a, b) => new Date(b.time) - new Date(a.time));
+            
+            // Finn alle som har landet
+            const landedFlights = wfFlights.filter(f => new Date(f.time) < now);
 
-            layers.forEach(el => {
-                // Oppdater dokument-dataen direkte
-                // Vi tvinger også fonten til Arial her for sikkerhets skyld
-                const newData = { t: text1, f: 'Arial', s: 80 }; // Default size
-                
-                // Sjekk om det er lag 2 (etter flipp)
-                if (el.data.nm && el.data.nm.indexOf(".2") !== -1) {
-                    newData.t = text2;
+            let msg1, msg2;
+
+            if (landedFlights.length > 0) {
+                // MSG2 (Slutten): Det aller siste flyet som landet (Index 0)
+                msg2 = landedFlights[0];
+
+                // MSG1 (Starten): Det NEST siste flyet (Index 1)
+                // Hvis det bare finnes ett fly totalt, bruker vi det samme på begge (ingen endring)
+                if (landedFlights.length > 1) {
+                    msg1 = landedFlights[1];
+                } else {
+                    msg1 = msg2; // Fallback hvis bare 1 fly har landet i dag
                 }
+
+                log(`Flipper fra: ${msg1.id} (${msg1.from}) -> Til: ${msg2.id} (${msg2.from})`);
+            } else {
+                log("Ingen landinger. Viser fallback.");
+                msg1 = { id: "INFO", from: "WIDERØE" };
+                msg2 = FALLBACK_DATA;
+            }
+
+            // Oppdater teksten mens animasjonen står stille
+            updateAllText(msg1, msg2);
+
+            // Spill av!
+            if (anim) {
+                anim.goToAndPlay(0);
+            }
+        }
+
+        function updateAllText(msg1, msg2) {
+            const city1 = prepareCityText(msg1.from, totalCitySlots);
+            const city2 = prepareCityText(msg2.from, totalCitySlots);
+            const id1   = prepareFlightText(msg1.id, totalFlightSlots);
+            const id2   = prepareFlightText(msg2.id, totalFlightSlots);
+
+            textElements.forEach(item => {
+                let char = " ";
+                let isSlot2 = item.name.includes(".2"); 
                 
-                // Oppdater dataen
-                el.updateDocumentData(newData);
+                const cityMatch = item.name.match(/bynavn char\s*(\d+)/);
+                if (cityMatch) {
+                    const idx = parseInt(cityMatch[1]) - 1; 
+                    if (idx >= 0 && idx < totalCitySlots) {
+                        char = isSlot2 ? city2[idx] : city1[idx];
+                    }
+                }
+
+                const flightMatch = item.name.match(/fnummer char\s*(\d+)/);
+                if (flightMatch) {
+                    const idx = parseInt(flightMatch[1]) - 1;
+                    if (idx >= 0 && idx < totalFlightSlots) {
+                        char = isSlot2 ? id2[idx] : id1[idx];
+                    }
+                }
+
+                item.element.updateDocumentData({ t: char });
             });
         }
 
-        // Hent data
         async function fetchFlightsFromAPI() {
             try {
                 const response = await fetch('https://wideroe-server.onrender.com/api/flights');
-                if (!response.ok) throw new Error("Server feil");
+                if (!response.ok) throw new Error("Feil");
                 return await response.json();
-            } catch (e) {
-                log("API Feil: " + e.message);
-                return [];
-            }
+            } catch (e) { return []; }
         }
 
-        // Tekst-vaskere
         function prepareCityText(text, totalSlots) {
             let arr = Array(totalSlots).fill(" "); 
             const safeText = text ? text.toUpperCase() : "";
@@ -155,47 +175,6 @@
             const safeText = text ? text.toUpperCase() : "";
             for (let i = 0; i < safeText.length; i++) { if (i < totalSlots) arr[i] = safeText[i]; }
             return arr;
-        }
-
-        // Hoved-loopen
-        async function runLogicLoop() {
-            const flights = await fetchFlightsFromAPI();
-            const now = new Date();
-            
-            const wfFlights = flights.filter(f => f.id.startsWith("WF"));
-            wfFlights.sort((a, b) => new Date(b.time) - new Date(a.time));
-            const landedFlights = wfFlights.filter(f => new Date(f.time) < now);
-
-            let msg1, msg2;
-
-            if (landedFlights.length > 0) {
-                const latest = landedFlights[0];
-                log(`Viser: ${latest.id} fra ${latest.from}`);
-                msg1 = { id: "SISTE", from: "ANKOMST" }; 
-                msg2 = latest;                            
-            } else {
-                log("Ingen landing funnet. Viser fallback.");
-                msg1 = { id: "INFO", from: "WIDERØE" };
-                msg2 = FALLBACK_DATA;
-            }
-
-            const city1 = prepareCityText(msg1.from, totalCitySlots);
-            const city2 = prepareCityText(msg2.from, totalCitySlots);
-            const id1   = prepareFlightText(msg1.id, totalFlightSlots);
-            const id2   = prepareFlightText(msg2.id, totalFlightSlots);
-
-            // Oppdater
-            for (let i = 1; i <= totalCitySlots; i++) updateSlot('city', i, city1[i-1], city2[i-1]);
-            for (let i = 1; i <= totalFlightSlots; i++) updateSlot('flight', i, id1[i-1], id2[i-1]);
-
-            // Spill
-            if (anim) {
-                anim.goToAndPlay(0);
-                // Vi tegner manuelt en gang for å sikre at teksten oppdateres før start
-                anim.renderer.renderFrame(null); 
-            }
-
-            setTimeout(runLogicLoop, 15000); 
         }
     </script>
 </body>
