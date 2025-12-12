@@ -2,110 +2,150 @@
 <html lang="no">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Widerøe - LIVE Flesland</title>
-    
+    <title>Widerøe - CANVAS STABLE</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js"></script>
-    
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&display=swap" rel="stylesheet">
-
     <style>
         body {
-            margin: 0; padding: 0; background-color: #000;
+            margin: 0; padding: 0; 
+            background-color: #1f8226; 
             display: flex; justify-content: center; align-items: center;
             height: 100vh; overflow: hidden;
-            font-family: 'Montserrat', sans-serif; 
         }
-        
         #lottie-container {
-            width: 100%; max-width: 1920px; max-height: 1080px;
+            width: 1920px; height: 1080px;
             background-color: #1f8226; 
-            box-shadow: 0 0 50px rgba(0,0,0,0.5);
         }
-
-        /* SIKKERHETS-GARDIN (Skjuler "S"-flashet ved start) */
-        #curtain {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background-color: #1f8226; z-index: 9999;
-            transition: opacity 0.5s ease-out;
+        #status {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(0,0,0,0.8); color: lime;
+            padding: 10px; font-family: monospace; z-index: 9999;
             pointer-events: none;
-        }
-        .fade-out { opacity: 0; }
-
-        .font-loaded svg text {
-            font-family: 'Montserrat', sans-serif !important;
-            font-weight: 700 !important;
         }
     </style>
 </head>
 <body>
-
-    <div id="curtain"></div>
+    <div id="status">Laster...</div>
     <div id="lottie-container"></div>
 
     <script>
-        // --- KONFIGURASJON ---
         const animationPath = 'data1234.json'; 
         const totalCitySlots = 12;   
         const totalFlightSlots = 6; 
-
-        // --- BACKUP DATA (Vises KUN hvis alt annet feiler) ---
         const FALLBACK_DATA = { id: "WF585", from: "KRISTIANSAND" };
 
         let anim = null;
-        let isFirstRun = true;
+        // Cache for å huske hvor tekstlagene er
+        let layerCache = { city: [], flight: [] };
 
-        // Sikkerhetsnett: Fjern gardinen etter 3 sekunder uansett
-        setTimeout(() => {
-            document.getElementById('curtain').classList.add('fade-out');
-        }, 3000);
+        function log(msg) {
+            console.log(msg);
+            document.getElementById('status').innerText = msg;
+        }
 
-        document.fonts.ready.then(function () {
-            anim = lottie.loadAnimation({
-                container: document.getElementById('lottie-container'), 
-                renderer: 'svg',
-                loop: false,
-                autoplay: false, 
-                path: animationPath
-            });
-
-            anim.addEventListener('DOMLoaded', function() {
-                document.getElementById('lottie-container').classList.add('font-loaded');
-                runLogicLoop(); 
-            });
+        // --- 1. START ANIMASJONEN I CANVAS-MODUS ---
+        anim = lottie.loadAnimation({
+            container: document.getElementById('lottie-container'), 
+            renderer: 'canvas', // <--- REDNINGEN MOT KRASJ
+            loop: false,
+            autoplay: false, 
+            path: animationPath,
+            rendererSettings: {
+                clearCanvas: true,
+                // VIKTIG: Vi tvinger fonten til å være Arial midlertidig
+                fontFamily: 'Arial', 
+            }
         });
 
-        // --- DATA HENTING ---
-        async function fetchFlightsFromAPI() {
-            // DIN LIVE SERVER:
-            const url = 'https://wideroe-server.onrender.com/api/flights';
+        // --- 2. NÅR DEN ER LASTET: BYGG KART OVER TEKSTEN ---
+        anim.addEventListener('DOMLoaded', function() {
+            log("Canvas lastet. Indekserer tekstlag...");
+            buildLayerCache();
+            log("Klar. Starter loop.");
+            runLogicLoop();
+        });
 
+        // Hjelpefunksjon for å finne lagene i Canvas-strukturen
+        function buildLayerCache() {
+            // I Canvas-modus ligger elementene i anim.renderer.elements
+            const traverse = (elements, parentName) => {
+                for (let i = 0; i < elements.length; i++) {
+                    const el = elements[i];
+                    // Sjekk navn i data-objektet
+                    const rawName = (el.data && el.data.nm) ? el.data.nm.toLowerCase() : "";
+                    
+                    // Er det et tekstlag?
+                    if (el.data && el.data.t) {
+                        if (parentName.includes("bynavn char")) {
+                            const match = parentName.match(/bynavn char\s*(\d+)/);
+                            if (match) {
+                                const idx = parseInt(match[1]);
+                                if (!layerCache.city[idx]) layerCache.city[idx] = [];
+                                layerCache.city[idx].push(el);
+                            }
+                        }
+                        else if (parentName.includes("fnummer char")) {
+                            const match = parentName.match(/fnummer char\s*(\d+)/);
+                            if (match) {
+                                const idx = parseInt(match[1]);
+                                if (!layerCache.flight[idx]) layerCache.flight[idx] = [];
+                                layerCache.flight[idx].push(el);
+                            }
+                        }
+                    }
+                    // Gå dypere hvis det er en gruppe
+                    if (el.elements) {
+                        let nextParent = parentName;
+                        if (rawName.includes("bynavn") || rawName.includes("fnummer")) {
+                            nextParent = rawName;
+                        }
+                        traverse(el.elements, nextParent);
+                    }
+                }
+            };
+            traverse(anim.renderer.elements, "");
+            console.log("Cache ferdig:", layerCache);
+        }
+
+        // Funksjon som oppdaterer teksten i Canvas
+        function updateSlot(type, index, text1, text2) {
+            const layers = layerCache[type][index];
+            if (!layers) return;
+
+            layers.forEach(el => {
+                // Oppdater dokument-dataen direkte
+                // Vi tvinger også fonten til Arial her for sikkerhets skyld
+                const newData = { t: text1, f: 'Arial', s: 80 }; // Default size
+                
+                // Sjekk om det er lag 2 (etter flipp)
+                if (el.data.nm && el.data.nm.indexOf(".2") !== -1) {
+                    newData.t = text2;
+                }
+                
+                // Oppdater dataen
+                el.updateDocumentData(newData);
+            });
+        }
+
+        // Hent data
+        async function fetchFlightsFromAPI() {
             try {
-                const response = await fetch(url);
-                if (!response.ok) throw new Error("Server svarte ikke");
-                const data = await response.json();
-                return data;
-            } catch (error) {
-                console.error("Kunne ikke hente live data:", error);
-                return []; 
+                const response = await fetch('https://wideroe-server.onrender.com/api/flights');
+                if (!response.ok) throw new Error("Server feil");
+                return await response.json();
+            } catch (e) {
+                log("API Feil: " + e.message);
+                return [];
             }
         }
 
-        // --- TEKST-FUNKSJONER ---
+        // Tekst-vaskere
         function prepareCityText(text, totalSlots) {
             let arr = Array(totalSlots).fill(" "); 
             const safeText = text ? text.toUpperCase() : "";
             let startPos = 0;
-            if (safeText.length < totalSlots) {
-                const empty = totalSlots - safeText.length;
-                startPos = Math.floor(empty / 2);
-            }
+            if (safeText.length < totalSlots) startPos = Math.floor((totalSlots - safeText.length) / 2);
             for (let i = 0; i < safeText.length; i++) {
-                if (startPos + i < totalSlots) {
-                    arr[startPos + i] = safeText[i];
-                }
+                if (startPos + i < totalSlots) arr[startPos + i] = safeText[i];
             }
             return arr;
         }
@@ -113,108 +153,48 @@
         function prepareFlightText(text, totalSlots) {
             let arr = Array(totalSlots).fill(" "); 
             const safeText = text ? text.toUpperCase() : "";
-            for (let i = 0; i < safeText.length; i++) {
-                if (i < totalSlots) {
-                    arr[i] = safeText[i];
-                }
-            }
+            for (let i = 0; i < safeText.length; i++) { if (i < totalSlots) arr[i] = safeText[i]; }
             return arr;
         }
 
-        function norm(str) {
-            return str.toLowerCase().replace(/\s+/g, '');
-        }
-
-        function updateDualLayer(baseName, index, charMsg1, charMsg2) {
-            if (!anim) return;
-            const elements = anim.renderer.elements;
-            const targetName = norm(baseName + index);
-
-            for (let i = 0; i < elements.length; i++) {
-                const elName = elements[i].data && elements[i].data.nm ? norm(elements[i].data.nm) : "";
-                if (elName === targetName) {
-                    const innerElements = elements[i].elements;
-                    if (innerElements) {
-                        for (let j = 0; j < innerElements.length; j++) {
-                            const layer = innerElements[j];
-                            if (!layer.data || !layer.data.t) continue; 
-                            
-                            const rawName = layer.data.nm || "";
-                            if (rawName.indexOf(".2") !== -1) {
-                                layer.updateDocumentData({ t: charMsg2 });
-                            } else {
-                                layer.updateDocumentData({ t: charMsg1 });
-                            }
-                        }
-                    }
-                    return; 
-                }
-            }
-        }
-
-        // --- HOVEDLOGIKK ---
+        // Hoved-loopen
         async function runLogicLoop() {
-            console.log("--- START LOGIKK ---");
             const flights = await fetchFlightsFromAPI();
             const now = new Date();
-            console.log("Klokken er nå:", now.toLocaleTimeString());
             
-            // 1. FILTRERING: Vi vil kun ha Widerøe (WF)
             const wfFlights = flights.filter(f => f.id.startsWith("WF"));
-            console.log(`Fant ${wfFlights.length} Widerøe-fly (av totalt ${flights.length}).`);
-
-            // 2. SORTERING: Nyeste tidspunkt først
             wfFlights.sort((a, b) => new Date(b.time) - new Date(a.time));
-
-            // 3. FINN LANDEDE FLY: Tidspunkt < Nå
             const landedFlights = wfFlights.filter(f => new Date(f.time) < now);
 
             let msg1, msg2;
 
             if (landedFlights.length > 0) {
-                // Ta det aller siste WF-flyet som landet (første i den sorterte listen)
                 const latest = landedFlights[0];
-                const landTime = new Date(latest.time).toLocaleTimeString();
-                
-                console.log(`✅ VALGT FLY: ${latest.id} fra ${latest.from} (Landet: ${landTime})`);
-                
+                log(`Viser: ${latest.id} fra ${latest.from}`);
                 msg1 = { id: "SISTE", from: "ANKOMST" }; 
                 msg2 = latest;                            
             } else {
-                console.log("⚠️ Ingen WF-landinger funnet akkurat nå. Viser fallback.");
+                log("Ingen landing funnet. Viser fallback.");
                 msg1 = { id: "INFO", from: "WIDERØE" };
                 msg2 = FALLBACK_DATA;
             }
 
-            // Klargjør tekst-arrayene
             const city1 = prepareCityText(msg1.from, totalCitySlots);
             const city2 = prepareCityText(msg2.from, totalCitySlots);
             const id1   = prepareFlightText(msg1.id, totalFlightSlots);
             const id2   = prepareFlightText(msg2.id, totalFlightSlots);
 
-            // Oppdater Lottie-lagene
-            for (let i = 1; i <= totalCitySlots; i++) {
-                updateDualLayer("Bynavn Char", i, city1[i-1], city2[i-1]);
-            }
-            for (let i = 1; i <= totalFlightSlots; i++) {
-                updateDualLayer("Fnummer Char", i, id1[i-1], id2[i-1]);
-            }
+            // Oppdater
+            for (let i = 1; i <= totalCitySlots; i++) updateSlot('city', i, city1[i-1], city2[i-1]);
+            for (let i = 1; i <= totalFlightSlots; i++) updateSlot('flight', i, id1[i-1], id2[i-1]);
 
-            // Fjern gardinen (første gang)
-            if (isFirstRun) {
-                setTimeout(() => {
-                    document.getElementById('curtain').classList.add('fade-out');
-                }, 100); 
-                isFirstRun = false;
-            }
-
-            // Spill av animasjonen
+            // Spill
             if (anim) {
-                anim.goToAndPlay(0); 
-                anim.playSegments([0, 251], true);
+                anim.goToAndPlay(0);
+                // Vi tegner manuelt en gang for å sikre at teksten oppdateres før start
+                anim.renderer.renderFrame(null); 
             }
 
-            // Vent 15 sekunder før vi sjekker på nytt
             setTimeout(runLogicLoop, 15000); 
         }
     </script>
