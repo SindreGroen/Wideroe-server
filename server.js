@@ -13,8 +13,9 @@ app.use(cors());
 const AIRPORT_CODE = 'BGO';
 const HOURS_BACK = 2;   
 const HOURS_FORWARD = 4; 
-const CACHE_DURATION = 180 * 1000; 
+const CACHE_DURATION = 180 * 1000; // 3 minutter cache
 
+// Mapping av flyplasskoder til bynavn
 const airportNames = {
     "OSL": "OSLO", "SVG": "STAVANGER", "TRD": "TRONDHEIM", "TOS": "TROMSØ",
     "BOO": "BODØ", "AES": "ÅLESUND", "KRS": "KRISTIANSAND", "HAU": "HAUGESUND",
@@ -29,16 +30,10 @@ const airportNames = {
     "ALC": "ALICANTE", "AGP": "MALAGA", "PMI": "PALMA", "LPA": "GRAN CANARIA"
 };
 
-// Backup-data
-const BACKUP_FLIGHTS = [
-    { id: "WF585", from: "KRISTIANSAND", time: new Date().toISOString() },
-    { id: "SK243", from: "OSLO", time: new Date().toISOString() },
-    { id: "WF123", from: "FLORØ", time: new Date().toISOString() }
-];
-
 let cachedData = null;
 let lastFetchTime = 0;
 
+// Agent for å håndtere SSL-sertifikater
 const agent = new https.Agent({ rejectUnauthorized: false });
 
 async function fetchFromAvinor() {
@@ -50,30 +45,23 @@ async function fetchFromAvinor() {
         const timeFrom = start.toISOString().split('.')[0]; 
         const timeTo = end.toISOString().split('.')[0];
 
-        // --- RETTELSE: Vi bruker nøyaktig URL fra bildet ditt ---
-        // Fjernet /XmlFeed.asp på slutten.
-        // Endret parametere til små bokstaver (airport, timeFrom osv) slik feilmeldingen ba om.
         const baseUrl = "https://asrv.avinor.no/XmlFeed/v1.0";
         const url = `${baseUrl}?airport=${AIRPORT_CODE}&timeFrom=${timeFrom}&timeTo=${timeTo}&direction=A`;
 
-        console.log(`📡 Henter data fra ÅPEN server: ${url}`);
+        console.log(`📡 Henter data fra Avinor...`);
 
         const response = await axios.get(url, {
             httpsAgent: agent,
             timeout: 15000, 
             headers: {
-                // Vi later fortsatt som vi er en nettleser for å være trygge
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml'
             }
         });
 
-        // Avinor sin nye server kan kanskje sende JSON nå? 
-        // Men siden linken heter XmlFeed, antar vi XML.
-        
         let flights = [];
         
-        // Hvis vi får XML (mest sannsynlig)
+        // Parsing av XML (Avinor standard)
         if (typeof response.data === 'string' && (response.data.includes('<?xml') || response.data.includes('<airport'))) {
              const parser = new xml2js.Parser();
              const result = await parser.parseStringPromise(response.data);
@@ -82,36 +70,47 @@ async function fetchFromAvinor() {
                  flights = result.airport.flights[0].flight;
              }
         } 
-        // Hvis den nye serveren faktisk er kul og sender JSON automatisk
         else if (typeof response.data === 'object' && response.data.flights) {
              flights = response.data.flights;
         }
 
         if (flights.length === 0) {
-            console.log("⚠️ Ingen flyvninger funnet i dataene.");
+            console.log("⚠️ Ingen flyvninger funnet hos Avinor.");
             return [];
         }
 
         const cleanFlights = [];
 
         flights.forEach(f => {
-            // Håndterer både XML-format (arrays) og JSON-format (direkte verdier)
+            // Henter ut ID og Tid fra XML-strukturen
             let flightId = Array.isArray(f.flight_id) ? f.flight_id[0] : f.flight_id;
             let time = Array.isArray(f.schedule_time) ? f.schedule_time[0] : f.schedule_time;
             
-            // Sjekk status
+            // Sikkerhetssjekk på ID
+            if (!flightId) return;
+
+            // --- FILTER: KUN WIDERØE ---
+            // Hvis flight ID ikke starter med "WF", hopper vi over denne.
+            if (!flightId.startsWith("WF")) {
+                return; 
+            }
+            // ---------------------------
+
+            // Sjekk om det finnes en oppdatert tid (f.eks. ved forsinkelse)
             if (f.status) {
                 let statusCode = Array.isArray(f.status) && f.status[0].$ ? f.status[0].$.code : (f.status.code || "");
                 let statusTime = Array.isArray(f.status) && f.status[0].$ ? f.status[0].$.time : (f.status.time || "");
                 
-                if (statusCode === 'A' && statusTime) {
+                // Bruk ankomsttid hvis status er 'A' (Arrived) eller 'E' (Estimated)
+                if ((statusCode === 'A' || statusCode === 'E') && statusTime) {
                     time = statusTime;
                 }
             }
 
-            if (!flightId) flightId = "UKJENT";
+            // Formater flight ID (maks 6 tegn)
             if (flightId.length > 6) flightId = flightId.substring(0, 6);
 
+            // Hent flyplassnavn fra listen vår
             let fromCode = Array.isArray(f.airport) ? f.airport[0] : f.airport;
             const cityName = airportNames[fromCode] || fromCode;
 
@@ -122,10 +121,6 @@ async function fetchFromAvinor() {
 
     } catch (error) {
         console.error("❌ Feil ved henting:", error.message);
-        if (error.response) {
-            console.error("Statuskode:", error.response.status);
-            console.error("Feilmelding fra Avinor:", JSON.stringify(error.response.data));
-        }
         return null;
     }
 }
@@ -133,30 +128,34 @@ async function fetchFromAvinor() {
 app.get('/api/flights', async (req, res) => {
     const now = Date.now();
 
+    // Sjekk cache først
     if (cachedData && (now - lastFetchTime < CACHE_DURATION)) {
         console.log("♻️  Serverer cache.");
         return res.json(cachedData);
     }
 
+    // Hent ny data hvis cache er gammel
     const freshData = await fetchFromAvinor();
 
     if (freshData) {
         cachedData = freshData;
         lastFetchTime = now;
-        console.log(`✅ SUKSESS! Ny data hentet: ${freshData.length} fly.`);
+        console.log(`✅ Ny data hentet: ${freshData.length} Widerøe-fly.`);
         res.json(freshData);
     } else {
+        // Hvis henting feilet
         if (cachedData) {
+            console.log("⚠️ Henting feilet, serverer gammel cache.");
             res.json(cachedData);
         } else {
-            console.log("🚨 Serverer backup.");
-            const liveBackup = BACKUP_FLIGHTS.map(f => ({ ...f, time: new Date().toISOString() }));
-            res.json(liveBackup);
+            console.log("🚨 Henting feilet og ingen cache. Sender tom liste.");
+            // Vi sender en tom liste, så får HTML-filen håndtere backup/nødmodus.
+            res.json([]); 
         }
     }
 });
 
-app.get('/', (req, res) => { res.send('Widerøe Middleware (Final Fix) OK'); });
+app.get('/', (req, res) => { res.send('Widerøe Filter Server OK'); });
 
 app.listen(PORT, () => { 
     console.log(`🚀 Server starter på port ${PORT}`); 
