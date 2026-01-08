@@ -19,6 +19,8 @@ const CACHE_DURATION = 180 * 1000;
 const MIN_AGE = 15;
 const MAX_AGE = 60;
 
+// Mapping av flyplasskoder til bynavn
+// ENDRING: Har lagt til TRF -> SANDEFJORD her
 const airportNames = {
     "OSL": "OSLO", "SVG": "STAVANGER", "TRD": "TRONDHEIM", "TOS": "TROMSØ",
     "BOO": "BODØ", "AES": "ÅLESUND", "KRS": "KRISTIANSAND", "HAU": "HAUGESUND",
@@ -30,7 +32,8 @@ const airportNames = {
     "AMS": "AMSTERDAM", "FRA": "FRANKFURT", "GDN": "GDANSK", "WAW": "WARSZAWA",
     "ARN": "STOCKHOLM", "KEF": "REYKJAVIK", "GOT": "GØTEBORG", "HEL": "HELSINKI",
     "EDI": "EDINBURGH", "BLL": "BILLUND", "HAM": "HAMBURG", "MUC": "MÜNCHEN",
-    "ALC": "ALICANTE", "AGP": "MALAGA", "PMI": "PALMA", "LPA": "GRAN CANARIA"
+    "ALC": "ALICANTE", "AGP": "MALAGA", "PMI": "PALMA", "LPA": "GRAN CANARIA",
+    "TRF": "SANDEFJORD", "RRS": "RØROS", "RYG": "RYGGE"
 };
 
 let cachedData = null;
@@ -76,7 +79,8 @@ async function fetchFromAvinor() {
             let flightId = Array.isArray(f.flight_id) ? f.flight_id[0] : f.flight_id;
             let time = Array.isArray(f.schedule_time) ? f.schedule_time[0] : f.schedule_time;
 
-            if (!flightId || !flightId.startsWith("WF")) return; // KUN Widerøe
+            // --- FILTER: KUN WIDERØE ---
+            if (!flightId || !flightId.startsWith("WF")) return; 
 
             if (f.status) {
                 let statusCode = Array.isArray(f.status) && f.status[0].$ ? f.status[0].$.code : (f.status.code || "");
@@ -85,13 +89,15 @@ async function fetchFromAvinor() {
             }
 
             if (flightId.length > 6) flightId = flightId.substring(0, 6);
+            
+            // Hent flyplassnavn fra listen vår (inkludert Sandefjord nå)
             let fromCode = Array.isArray(f.airport) ? f.airport[0] : f.airport;
             const cityName = airportNames[fromCode] || fromCode;
 
             // --- LOGIKK FOR SORTERING ---
             const flightTime = new Date(time);
             
-            // Sjekk at det er samme dag (lokal tid/server tid bør matche)
+            // Sjekk at det er samme dag
             const isToday = flightTime.toDateString() === now.toDateString();
             const hasLanded = flightTime < now;
             
