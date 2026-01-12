@@ -12,17 +12,20 @@ app.use(cors());
 // --- KONFIGURASJON ---
 const AIRPORT_CODE = 'BGO';
 const HOURS_BACK = 24; 
-const HOURS_FORWARD = 4; // Ser litt lenger frem for avganger
-const CACHE_DURATION = 180 * 1000; 
+const HOURS_FORWARD = 4; // Ser fremover for å finne avganger
+const CACHE_DURATION = 180 * 1000; // 3 minutter cache
 
-// Tidsregler (Minutter)
-const ARRIVAL_MIN_AGE = 15;  // Vis ankomst 15 min ETTER landing
-const ARRIVAL_MAX_AGE = 60;  // ...opp til 60 min etter
+// --- TIDSREGLER (Minutter) ---
 
-const DEPARTURE_MIN_FUTURE = 20; // Vis avgang hvis det er MER enn 20 min til (så de ikke har gått til gate)
-const DEPARTURE_MAX_FUTURE = 120; // ...opp til 2 timer før avgang
+// ANKOMST: Vis fly som landet for mellom 15 og 60 minutter siden
+const ARR_MIN_AGE = 15; 
+const ARR_MAX_AGE = 60;
 
-// --- SVARTELISTE FLIGHT ID ---
+// AVGANG: Vis fly som skal dra om mellom 15 og 90 minutter
+const DEP_MIN_FUTURE = 15; // Ikke vis hvis det er mindre enn 15 min til (boarding ferdig)
+const DEP_MAX_FUTURE = 90; // Vis opp til 1,5 time før
+
+// --- SVARTELISTE ---
 const BLOCKED_IDS = [
     "WF150", "WF151", "WF152", "WF153", 
     "WF158", "WF159", "WF163", "WF170"
@@ -57,11 +60,11 @@ async function fetchFromAvinor() {
         const timeTo = end.toISOString().split('.')[0];
         const baseUrl = "https://asrv.avinor.no/XmlFeed/v1.0";
         
-        // Henter BÅDE Ankomst (A) og Avgang (D) ved å gjøre to kall (tryggest)
+        // Henter både Ankomster (A) og Avganger (D)
         const urlArr = `${baseUrl}?airport=${AIRPORT_CODE}&timeFrom=${timeFrom}&timeTo=${timeTo}&direction=A`;
         const urlDep = `${baseUrl}?airport=${AIRPORT_CODE}&timeFrom=${timeFrom}&timeTo=${timeTo}&direction=D`;
 
-        console.log(`📡 Henter Ankomster og Avganger...`);
+        console.log(`📡 Henter data fra Avinor...`);
 
         const [resArr, resDep] = await Promise.all([
             axios.get(urlArr, { httpsAgent: agent, headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml' } }),
@@ -103,7 +106,6 @@ async function fetchFromAvinor() {
             if (!flightId || !flightId.startsWith("WF")) return; 
             if (BLOCKED_IDS.includes(flightId)) return;
 
-            // Oppdater tid ved status endring
             if (f.status) {
                 let statusCode = Array.isArray(f.status) && f.status[0].$ ? f.status[0].$.code : (f.status.code || "");
                 let statusTime = Array.isArray(f.status) && f.status[0].$ ? f.status[0].$.time : (f.status.time || "");
@@ -116,28 +118,30 @@ async function fetchFromAvinor() {
 
             const flightTime = new Date(time);
             const isToday = flightTime.toDateString() === now.toDateString();
-            const minutesDiff = (now - flightTime) / 1000 / 60; // Positiv = Landet siden, Negativ = Frem i tid
+            
+            // Diff i minutter: 
+            // Positiv (+) = Fortid (har landet/dratt)
+            // Negativ (-) = Fremtid (skal lande/dra)
+            const minutesDiff = (now - flightTime) / 1000 / 60; 
 
-            const flightObj = { id: flightId, from: cityName, time: time, dir: direction };
+            const flightObj = { id: flightId, from: cityName, time: time, type: direction };
 
             if (direction === 'A') {
-                // --- ANKOMST LOGIKK ---
-                if (isToday && minutesDiff > 0) { // Må ha landet
-                    if (minutesDiff > ARRIVAL_MIN_AGE && minutesDiff < ARRIVAL_MAX_AGE) {
+                // --- ANKOMST ---
+                if (isToday && minutesDiff > 0) { // Har landet
+                    if (minutesDiff > ARR_MIN_AGE && minutesDiff < ARR_MAX_AGE) {
                         result.arrivals.relevant.push(flightObj);
                     } else {
                         result.arrivals.archive.push(flightObj);
                     }
                 }
             } else if (direction === 'D') {
-                // --- AVGANG LOGIKK ---
-                // Vi vil ønske god tur til de som skal reise SNART.
-                // minutesDiff er negativ hvis flyet går i fremtiden.
-                // Eks: Fly går om 30 min -> minutesDiff = -30.
+                // --- AVGANG ---
+                // minutesDiff er negativ for fremtidige fly. Vi snur fortegnet.
                 const minutesToTakeoff = -minutesDiff;
 
-                if (isToday && minutesToTakeoff > 0) { // Må være i fremtiden (ikke dratt enda)
-                    if (minutesToTakeoff > DEPARTURE_MIN_FUTURE && minutesToTakeoff < DEPARTURE_MAX_FUTURE) {
+                if (isToday && minutesToTakeoff > 0) { // Skal dra i fremtiden
+                    if (minutesToTakeoff > DEP_MIN_FUTURE && minutesToTakeoff < DEP_MAX_FUTURE) {
                         result.departures.relevant.push(flightObj);
                     } else {
                         result.departures.archive.push(flightObj);
@@ -147,8 +151,11 @@ async function fetchFromAvinor() {
         });
 
         // Sortering
-        result.arrivals.relevant.sort((a, b) => new Date(b.time) - new Date(a.time)); // Nyeste landing først
-        result.departures.relevant.sort((a, b) => new Date(a.time) - new Date(b.time)); // Snarligste avgang først
+        // Ankomster: Nyeste landing først (øverst i bunken)
+        result.arrivals.relevant.sort((a, b) => new Date(b.time) - new Date(a.time));
+        
+        // Avganger: De som går SNART først (øverst i bunken)
+        result.departures.relevant.sort((a, b) => new Date(a.time) - new Date(b.time));
 
         return result;
 
