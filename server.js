@@ -12,15 +12,17 @@ app.use(cors());
 // --- KONFIGURASJON ---
 const AIRPORT_CODE = 'BGO';
 const HOURS_BACK = 24; 
-const HOURS_FORWARD = 2; 
+const HOURS_FORWARD = 4; // Ser litt lenger frem for avganger
 const CACHE_DURATION = 180 * 1000; 
 
-// Tidsregler for "Relevant" (i minutter siden landing)
-const MIN_AGE = 15;
-const MAX_AGE = 60;
+// Tidsregler (Minutter)
+const ARRIVAL_MIN_AGE = 15;  // Vis ankomst 15 min ETTER landing
+const ARRIVAL_MAX_AGE = 60;  // ...opp til 60 min etter
+
+const DEPARTURE_MIN_FUTURE = 20; // Vis avgang hvis det er MER enn 20 min til (så de ikke har gått til gate)
+const DEPARTURE_MAX_FUTURE = 120; // ...opp til 2 timer før avgang
 
 // --- SVARTELISTE FLIGHT ID ---
-// Disse flyvningene vil aldri bli sendt til skjermen
 const BLOCKED_IDS = [
     "WF150", "WF151", "WF152", "WF153", 
     "WF158", "WF159", "WF163", "WF170"
@@ -54,80 +56,101 @@ async function fetchFromAvinor() {
         const timeFrom = start.toISOString().split('.')[0]; 
         const timeTo = end.toISOString().split('.')[0];
         const baseUrl = "https://asrv.avinor.no/XmlFeed/v1.0";
-        const url = `${baseUrl}?airport=${AIRPORT_CODE}&timeFrom=${timeFrom}&timeTo=${timeTo}&direction=A`;
+        
+        // Henter BÅDE Ankomst (A) og Avgang (D) ved å gjøre to kall (tryggest)
+        const urlArr = `${baseUrl}?airport=${AIRPORT_CODE}&timeFrom=${timeFrom}&timeTo=${timeTo}&direction=A`;
+        const urlDep = `${baseUrl}?airport=${AIRPORT_CODE}&timeFrom=${timeFrom}&timeTo=${timeTo}&direction=D`;
 
-        console.log(`📡 Henter data fra Avinor...`);
+        console.log(`📡 Henter Ankomster og Avganger...`);
 
-        const response = await axios.get(url, {
-            httpsAgent: agent,
-            timeout: 15000, 
-            headers: { 'User-Agent': 'WideroeDigitalSignage/1.0', 'Accept': 'text/html,application/xhtml+xml,application/xml' }
-        });
+        const [resArr, resDep] = await Promise.all([
+            axios.get(urlArr, { httpsAgent: agent, headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml' } }),
+            axios.get(urlDep, { httpsAgent: agent, headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml' } })
+        ]);
 
-        let flights = [];
-        if (typeof response.data === 'string' && (response.data.includes('<?xml') || response.data.includes('<airport'))) {
-             const parser = new xml2js.Parser();
-             const result = await parser.parseStringPromise(response.data);
-             if (result.airport && result.airport.flights && result.airport.flights[0].flight) {
-                 flights = result.airport.flights[0].flight;
-             }
-        } else if (typeof response.data === 'object' && response.data.flights) {
-             flights = response.data.flights;
-        }
+        const parseFlights = async (xmlData) => {
+            let flights = [];
+            if (typeof xmlData === 'string' && (xmlData.includes('<?xml') || xmlData.includes('<airport'))) {
+                const parser = new xml2js.Parser();
+                const result = await parser.parseStringPromise(xmlData);
+                if (result.airport && result.airport.flights && result.airport.flights[0].flight) {
+                    flights = result.airport.flights[0].flight;
+                }
+            } else if (typeof xmlData === 'object' && xmlData.flights) {
+                flights = xmlData.flights;
+            }
+            return flights;
+        };
 
-        if (flights.length === 0) return null;
+        const flightsArr = await parseFlights(resArr.data);
+        const flightsDep = await parseFlights(resDep.data);
+        const allFlights = [...flightsArr, ...flightsDep];
 
-        const relevantList = [];
-        const archiveList = [];
+        if (allFlights.length === 0) return null;
 
-        flights.forEach(f => {
+        const result = {
+            arrivals: { relevant: [], archive: [] },
+            departures: { relevant: [], archive: [] }
+        };
+
+        allFlights.forEach(f => {
             let flightId = Array.isArray(f.flight_id) ? f.flight_id[0] : f.flight_id;
             let time = Array.isArray(f.schedule_time) ? f.schedule_time[0] : f.schedule_time;
+            
+            // Sjekk retning: A = Arrival, D = Departure
+            let direction = Array.isArray(f.arr_dep) ? f.arr_dep[0] : f.arr_dep;
 
-            if (!flightId) return;
-
-            // --- FILTER 1: KUN WIDERØE ---
-            if (!flightId.startsWith("WF")) return; 
-
-            // --- FILTER 2: SVARTELISTE PÅ ID ---
+            if (!flightId || !flightId.startsWith("WF")) return; 
             if (BLOCKED_IDS.includes(flightId)) return;
 
+            // Oppdater tid ved status endring
             if (f.status) {
                 let statusCode = Array.isArray(f.status) && f.status[0].$ ? f.status[0].$.code : (f.status.code || "");
                 let statusTime = Array.isArray(f.status) && f.status[0].$ ? f.status[0].$.time : (f.status.time || "");
-                if ((statusCode === 'A' || statusCode === 'E') && statusTime) time = statusTime;
+                if ((statusCode === 'A' || statusCode === 'E' || statusCode === 'D') && statusTime) time = statusTime;
             }
 
             if (flightId.length > 6) flightId = flightId.substring(0, 6);
-            
             let fromCode = Array.isArray(f.airport) ? f.airport[0] : f.airport;
             const cityName = airportNames[fromCode] || fromCode;
 
-            // --- LOGIKK FOR SORTERING ---
             const flightTime = new Date(time);
-            
             const isToday = flightTime.toDateString() === now.toDateString();
-            const hasLanded = flightTime < now;
-            
-            if (isToday && hasLanded) {
-                const minutesSinceLanding = (now - flightTime) / 1000 / 60;
-                const flightObj = { id: flightId, from: cityName, time: time };
+            const minutesDiff = (now - flightTime) / 1000 / 60; // Positiv = Landet siden, Negativ = Frem i tid
 
-                if (minutesSinceLanding > MIN_AGE && minutesSinceLanding < MAX_AGE) {
-                    relevantList.push(flightObj);
-                } else {
-                    archiveList.push(flightObj);
+            const flightObj = { id: flightId, from: cityName, time: time, dir: direction };
+
+            if (direction === 'A') {
+                // --- ANKOMST LOGIKK ---
+                if (isToday && minutesDiff > 0) { // Må ha landet
+                    if (minutesDiff > ARRIVAL_MIN_AGE && minutesDiff < ARRIVAL_MAX_AGE) {
+                        result.arrivals.relevant.push(flightObj);
+                    } else {
+                        result.arrivals.archive.push(flightObj);
+                    }
+                }
+            } else if (direction === 'D') {
+                // --- AVGANG LOGIKK ---
+                // Vi vil ønske god tur til de som skal reise SNART.
+                // minutesDiff er negativ hvis flyet går i fremtiden.
+                // Eks: Fly går om 30 min -> minutesDiff = -30.
+                const minutesToTakeoff = -minutesDiff;
+
+                if (isToday && minutesToTakeoff > 0) { // Må være i fremtiden (ikke dratt enda)
+                    if (minutesToTakeoff > DEPARTURE_MIN_FUTURE && minutesToTakeoff < DEPARTURE_MAX_FUTURE) {
+                        result.departures.relevant.push(flightObj);
+                    } else {
+                        result.departures.archive.push(flightObj);
+                    }
                 }
             }
         });
 
-        relevantList.sort((a, b) => new Date(b.time) - new Date(a.time));
-        archiveList.sort((a, b) => new Date(b.time) - new Date(a.time));
+        // Sortering
+        result.arrivals.relevant.sort((a, b) => new Date(b.time) - new Date(a.time)); // Nyeste landing først
+        result.departures.relevant.sort((a, b) => new Date(a.time) - new Date(b.time)); // Snarligste avgang først
 
-        return {
-            relevant: relevantList,
-            archive: archiveList
-        };
+        return result;
 
     } catch (error) {
         console.error("❌ Feil:", error.message);
@@ -141,17 +164,15 @@ app.get('/api/flights', async (req, res) => {
         console.log("♻️  Cache");
         return res.json(cachedData);
     }
-
     const freshData = await fetchFromAvinor();
-
     if (freshData) {
         cachedData = freshData;
         lastFetchTime = now;
-        console.log(`✅ Data: ${freshData.relevant.length} relevante, ${freshData.archive.length} i arkiv.`);
+        console.log(`✅ Data: Arr: ${freshData.arrivals.relevant.length}, Dep: ${freshData.departures.relevant.length}`);
         res.json(freshData);
     } else {
         if (cachedData) res.json(cachedData);
-        else res.json({ relevant: [], archive: [] }); 
+        else res.json({ arrivals: { relevant: [], archive: [] }, departures: { relevant: [], archive: [] } }); 
     }
 });
 
