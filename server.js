@@ -25,10 +25,16 @@ const ARR_MAX_AGE = 60;
 const DEP_MIN_FUTURE = 15; // Ikke vis hvis det er mindre enn 15 min til (boarding ferdig)
 const DEP_MAX_FUTURE = 90; // Vis opp til 1,5 time før
 
-// --- SVARTELISTE ---
+// --- SVARTELISTE FLIGHT ID ---
+// Fly som er i denne listen vil ALDRI bli sendt til skjermen.
 const BLOCKED_IDS = [
+    // Ørsta/Volda & Sogndal
     "WF150", "WF151", "WF152", "WF153", 
-    "WF158", "WF159", "WF163", "WF170"
+    "WF158", "WF159", "WF163", "WF170",
+
+    // Ålesund (Midlertidig blokkert pga grafikk/font)
+    "WF451", "WF453", "WF455", "WF457", "WF459", "WF461", // Til Bergen
+    "WF452", "WF454", "WF456", "WF458", "WF460", "WF462"  // Fra Bergen
 ];
 
 const airportNames = {
@@ -104,7 +110,10 @@ async function fetchFromAvinor() {
             let direction = Array.isArray(f.arr_dep) ? f.arr_dep[0] : f.arr_dep;
 
             if (!flightId || !flightId.startsWith("WF")) return; 
-            if (BLOCKED_IDS.includes(flightId)) return;
+            
+            // --- SVARTELISTE SJEKK ---
+            const normalizedId = flightId.replace(/\s+/g, '');
+            if (BLOCKED_IDS.includes(normalizedId)) return;
 
             if (f.status) {
                 let statusCode = Array.isArray(f.status) && f.status[0].$ ? f.status[0].$.code : (f.status.code || "");
@@ -120,8 +129,6 @@ async function fetchFromAvinor() {
             const isToday = flightTime.toDateString() === now.toDateString();
             
             // Diff i minutter: 
-            // Positiv (+) = Fortid (har landet/dratt)
-            // Negativ (-) = Fremtid (skal lande/dra)
             const minutesDiff = (now - flightTime) / 1000 / 60; 
 
             const flightObj = { id: flightId, from: cityName, time: time, type: direction };
@@ -137,7 +144,6 @@ async function fetchFromAvinor() {
                 }
             } else if (direction === 'D') {
                 // --- AVGANG ---
-                // minutesDiff er negativ for fremtidige fly. Vi snur fortegnet.
                 const minutesToTakeoff = -minutesDiff;
 
                 if (isToday && minutesToTakeoff > 0) { // Skal dra i fremtiden
@@ -151,10 +157,7 @@ async function fetchFromAvinor() {
         });
 
         // Sortering
-        // Ankomster: Nyeste landing først (øverst i bunken)
         result.arrivals.relevant.sort((a, b) => new Date(b.time) - new Date(a.time));
-        
-        // Avganger: De som går SNART først (øverst i bunken)
         result.departures.relevant.sort((a, b) => new Date(a.time) - new Date(b.time));
 
         return result;
