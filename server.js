@@ -11,7 +11,7 @@ app.use(cors());
 
 // --- KONFIGURASJON ---
 const AIRPORT_CODE = 'BGO';
-const HOURS_BACK = 24; // Vi ser 24 timer tilbake for å få med hele dagens arkiv
+const HOURS_BACK = 24; 
 const HOURS_FORWARD = 2; 
 const CACHE_DURATION = 180 * 1000; 
 
@@ -19,8 +19,13 @@ const CACHE_DURATION = 180 * 1000;
 const MIN_AGE = 15;
 const MAX_AGE = 60;
 
-// Mapping av flyplasskoder til bynavn
-// ENDRING: Har lagt til TRF -> SANDEFJORD her
+// --- SVARTELISTE FLIGHT ID ---
+// Disse flyvningene vil aldri bli sendt til skjermen
+const BLOCKED_IDS = [
+    "WF150", "WF151", "WF152", "WF153", 
+    "WF158", "WF159", "WF163", "WF170"
+];
+
 const airportNames = {
     "OSL": "OSLO", "SVG": "STAVANGER", "TRD": "TRONDHEIM", "TOS": "TROMSØ",
     "BOO": "BODØ", "AES": "ÅLESUND", "KRS": "KRISTIANSAND", "HAU": "HAUGESUND",
@@ -79,8 +84,13 @@ async function fetchFromAvinor() {
             let flightId = Array.isArray(f.flight_id) ? f.flight_id[0] : f.flight_id;
             let time = Array.isArray(f.schedule_time) ? f.schedule_time[0] : f.schedule_time;
 
-            // --- FILTER: KUN WIDERØE ---
-            if (!flightId || !flightId.startsWith("WF")) return; 
+            if (!flightId) return;
+
+            // --- FILTER 1: KUN WIDERØE ---
+            if (!flightId.startsWith("WF")) return; 
+
+            // --- FILTER 2: SVARTELISTE PÅ ID ---
+            if (BLOCKED_IDS.includes(flightId)) return;
 
             if (f.status) {
                 let statusCode = Array.isArray(f.status) && f.status[0].$ ? f.status[0].$.code : (f.status.code || "");
@@ -90,32 +100,27 @@ async function fetchFromAvinor() {
 
             if (flightId.length > 6) flightId = flightId.substring(0, 6);
             
-            // Hent flyplassnavn fra listen vår (inkludert Sandefjord nå)
             let fromCode = Array.isArray(f.airport) ? f.airport[0] : f.airport;
             const cityName = airportNames[fromCode] || fromCode;
 
             // --- LOGIKK FOR SORTERING ---
             const flightTime = new Date(time);
             
-            // Sjekk at det er samme dag
             const isToday = flightTime.toDateString() === now.toDateString();
             const hasLanded = flightTime < now;
             
             if (isToday && hasLanded) {
                 const minutesSinceLanding = (now - flightTime) / 1000 / 60;
-                
                 const flightObj = { id: flightId, from: cityName, time: time };
 
                 if (minutesSinceLanding > MIN_AGE && minutesSinceLanding < MAX_AGE) {
                     relevantList.push(flightObj);
                 } else {
-                    // Legg i arkivet hvis det har landet i dag, men er utenfor "gull-vinduet"
                     archiveList.push(flightObj);
                 }
             }
         });
 
-        // Sorter nyeste øverst
         relevantList.sort((a, b) => new Date(b.time) - new Date(a.time));
         archiveList.sort((a, b) => new Date(b.time) - new Date(a.time));
 
@@ -146,7 +151,7 @@ app.get('/api/flights', async (req, res) => {
         res.json(freshData);
     } else {
         if (cachedData) res.json(cachedData);
-        else res.json({ relevant: [], archive: [] }); // Tomme lister ved feil
+        else res.json({ relevant: [], archive: [] }); 
     }
 });
 
