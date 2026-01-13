@@ -32,9 +32,11 @@ const BLOCKED_IDS = [
     "WF150", "WF151", "WF152", "WF153", 
     "WF158", "WF159", "WF163", "WF170",
 
-    // Ålesund (Midlertidig blokkert pga grafikk/font)
-    "WF451", "WF453", "WF455", "WF457", "WF459", "WF461", // Til Bergen
-    "WF452", "WF454", "WF456", "WF458", "WF460", "WF462"  // Fra Bergen
+    // Ålesund (Til/Fra Bergen)
+    // Har inkludert både WF456 (logisk rekkefølge) og WF466 (fra din liste) for sikkerhets skyld.
+    "WF451", "WF452", "WF453", "WF454", "WF455", 
+    "WF456", "WF466", // Sikring
+    "WF457", "WF458", "WF459", "WF460", "WF461", "WF462"
 ];
 
 const airportNames = {
@@ -112,6 +114,7 @@ async function fetchFromAvinor() {
             if (!flightId || !flightId.startsWith("WF")) return; 
             
             // --- SVARTELISTE SJEKK ---
+            // Fjerner eventuelle mellomrom (eks "WF 451" -> "WF451") for å matche listen vår
             const normalizedId = flightId.replace(/\s+/g, '');
             if (BLOCKED_IDS.includes(normalizedId)) return;
 
@@ -128,7 +131,7 @@ async function fetchFromAvinor() {
             const flightTime = new Date(time);
             const isToday = flightTime.toDateString() === now.toDateString();
             
-            // Diff i minutter: 
+            // Diff i minutter
             const minutesDiff = (now - flightTime) / 1000 / 60; 
 
             const flightObj = { id: flightId, from: cityName, time: time, type: direction };
