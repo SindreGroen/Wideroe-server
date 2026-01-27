@@ -51,7 +51,7 @@ const airportNames = {
     "ARN": "STOCKHOLM", "KEF": "REYKJAVIK", "GOT": "GØTEBORG", "HEL": "HELSINKI",
     "EDI": "EDINBURGH", "BLL": "BILLUND", "HAM": "HAMBURG", "MUC": "MÜNCHEN",
     "ALC": "ALICANTE", "AGP": "MALAGA", "PMI": "PALMA", "LPA": "GRAN CANARIA",
-    "TRF": "SANDEFJORD", "RRS": "RØROS", "RYG": "RYGGE"
+    "TRF": "SANDEFJORD", "RRS": "RØROS", "RYG": "RYGGE", "DUB": "DUBLIN"
 };
 
 let cachedData = null;
